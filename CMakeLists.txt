@@ -119,6 +119,10 @@ add_executable(feature_tracker_node src/feature_tracker_node.cpp)
 target_link_libraries(feature_tracker_node ${PROJECT_NAME})
 add_dependencies(feature_tracker_node ${${PROJECT_NAME}_EXPORTED_TARGETS} ${catkin_EXPORTED_TARGETS})
 
+add_executable(rovio_benchmark_node src/benchmark_node.cpp)
+target_link_libraries(rovio_benchmark_node ${PROJECT_NAME})
+add_dependencies(rovio_benchmark_node ${${PROJECT_NAME}_EXPORTED_TARGETS} ${catkin_EXPORTED_TARGETS})
+
 if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/gtest/")
 	message(STATUS "Building GTests!")
 	option(BUILD_GTEST "build gtest" ON)
