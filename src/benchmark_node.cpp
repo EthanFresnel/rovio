@@ -118,7 +118,7 @@ int main(int argc, char** argv){
 
   bool isTriggerInitialized = false;
   double lastTriggerTime = 0.0;
-  size_t img_id = -1;
+  int64_t img_id = -1;
   bool new_pose = false;
   for(rosbag::View::iterator it = view.begin();it != view.end() && ros::ok();it++){
     if(it->getTopic() == imu_topic_name){
