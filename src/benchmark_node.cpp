@@ -11,6 +11,11 @@
 #include <boost/foreach.hpp>
 #include <boost/date_time/posix_time/posix_time.hpp>
 #include <boost/date_time/posix_time/posix_time_io.hpp>
+
+#include <unordered_map>
+#include <tuple>
+#include <vikit/timer.h>
+
 #define foreach BOOST_FOREACH
 
 #ifdef ROVIO_NMAXFEATURE
@@ -57,6 +62,12 @@ void tracePose(std::ofstream& trace_est_pose,
                  << -q(0) << " " << std::endl;
 }
 
+void traceTiming(std::ofstream& trace, const double timestamp, const double t_frame)
+{
+  trace.precision(16);
+  trace << timestamp << ", " << t_frame << std::endl;
+}
+
 int main(int argc, char** argv){
   ros::init(argc, argv, "rovio");
   ros::NodeHandle nh;
@@ -93,12 +104,18 @@ int main(int argc, char** argv){
 
   std::string trace_dir = "/tmp";
   nh_private.param("trace_dir", trace_dir, trace_dir);
-  std::string filename_out = trace_dir + "/traj_estimate.txt";
+  std::string traj_out = trace_dir + "/traj_estimate.txt";
   std::ofstream trace_est_pose;
-  trace_est_pose.open(filename_out.c_str());
+  trace_est_pose.open(traj_out.c_str());
   if(trace_est_pose.fail())
     throw std::runtime_error("Could not create tracefile. Does folder exist?");
-  std::cout << "Writing trace of estimated pose to: " << filename_out << std::endl;
+  std::string timing_out = trace_dir + "/trace.csv";
+  std::ofstream trace_timing;
+  trace_timing.open(timing_out.c_str());
+  if(trace_timing.fail())
+    throw std::runtime_error("Could not create tracefile. Does folder exist?");
+  trace_timing << "timestamp" << ", " << "tot_time" << std::endl;
+  std::cout << "Writing trace of estimated pose to: " << traj_out << " and timing to: " << timing_out << std::endl;
 
   // Copy info
   std::string info_filename_out = trace_dir + "/filter_config.info";
@@ -120,6 +137,9 @@ int main(int argc, char** argv){
   double lastTriggerTime = 0.0;
   int64_t img_id = -1;
   bool new_pose = false;
+
+  std::unordered_map<double, std::pair<int64_t, vk::Timer>> results;
+
   for(rosbag::View::iterator it = view.begin();it != view.end() && ros::ok();it++){
     if(it->getTopic() == imu_topic_name){
       sensor_msgs::Imu::ConstPtr imuMsg = it->instantiate<sensor_msgs::Imu>();
@@ -129,20 +149,35 @@ int main(int argc, char** argv){
       sensor_msgs::ImageConstPtr imgMsg = it->instantiate<sensor_msgs::Image>();
       ++img_id;
       new_pose = true;
-      if (imgMsg != NULL) rovioNode.imgCallback0(imgMsg);
+      if (imgMsg != NULL)
+      {
+        results.emplace(std::make_pair(imgMsg->header.stamp.toSec(), std::make_pair(img_id, vk::Timer())));
+        rovioNode.imgCallback0(imgMsg);
+      }
+
     }
     ros::spinOnce();
 
     if(rovioNode.gotFirstMessages_){
       static double lastSafeTime = rovioNode.mpFilter_->safe_.t_;
       if(rovioNode.mpFilter_->safe_.t_ > lastSafeTime){
+        lastSafeTime = rovioNode.mpFilter_->safe_.t_;
+
         if(new_pose)
         {
-          tracePose(trace_est_pose, rovioNode.imuOutput_.WrWB(), rovioNode.imuOutput_.qBW().vector(), img_id);
-          new_pose = false;
+          auto result = results.find(lastSafeTime);
+          if(result != results.end())
+          {
+            tracePose(trace_est_pose, rovioNode.imuOutput_.WrWB(), rovioNode.imuOutput_.qBW().vector(), result->second.first);
+            new_pose = false;
+            traceTiming(trace_timing, lastSafeTime, result->second.second.stop());
+            results.erase(lastSafeTime);
+          }
+          else
+          {
+            ROS_WARN_STREAM("Could not find result from time " << lastSafeTime << " in results.");
+          }
         }
-
-        lastSafeTime = rovioNode.mpFilter_->safe_.t_;
       }
       if(!isTriggerInitialized){
         lastTriggerTime = lastSafeTime;
@@ -159,6 +194,7 @@ int main(int argc, char** argv){
 
   bagIn.close();
   trace_est_pose.close();
+  trace_timing.close();
 
 
   return 0;
