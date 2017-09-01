@@ -114,7 +114,7 @@ int main(int argc, char** argv){
   trace_timing.open(timing_out.c_str());
   if(trace_timing.fail())
     throw std::runtime_error("Could not create tracefile. Does folder exist?");
-  trace_timing << "timestamp" << ", " << "tot_time" << std::endl;
+  trace_timing << "timestamp" << "," << "tot_time" << std::endl;
   std::cout << "Writing trace of estimated pose to: " << traj_out << " and timing to: " << timing_out << std::endl;
 
   // Copy info
