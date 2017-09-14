@@ -49,6 +49,7 @@ static constexpr int nPose_ = 0; // Additional pose states.
 #endif
 
 typedef rovio::RovioFilter<rovio::FilterState<nMax_,nLevels_,patchSize_,nCam_,nPose_>> mtFilter;
+typedef rovio::RovioNode<mtFilter> rovioNode;
 
 void tracePose(std::ofstream& trace_est_pose,
                const Eigen::Vector3d& t,
@@ -93,8 +94,8 @@ int main(int argc, char** argv){
   mpFilter->refreshProperties();
 
   // Node
-  rovio::RovioNode<mtFilter> rovioNode(nh, nh_private, mpFilter);
-  rovioNode.makeTest();
+  rovioNode rovio_node(nh, nh_private, mpFilter);
+  rovio_node.makeTest();
   double resetTrigger = 0.0;
 
   rosbag::Bag bagIn;
@@ -126,8 +127,13 @@ int main(int argc, char** argv){
   std::vector<std::string> topics;
   std::string imu_topic_name = "/imu0";
   nh_private.param("imu_topic_name", imu_topic_name, imu_topic_name);
+  ros::Publisher imu_pub = nh.advertise<sensor_msgs::Imu>(imu_topic_name,1);
   std::string cam0_topic_name = "/cam0/image_raw";
   nh_private.param("cam0_topic_name", cam0_topic_name, cam0_topic_name);
+  ros::Publisher img_pub = nh.advertise<sensor_msgs::Image>(cam0_topic_name,1);
+
+  int dataset_last_frame = 10000;
+  nh_private.param("dataset_last_frame", dataset_last_frame, dataset_last_frame);
 
   topics.push_back(std::string(imu_topic_name));
   topics.push_back(std::string(cam0_topic_name));
@@ -140,35 +146,45 @@ int main(int argc, char** argv){
 
   std::unordered_map<double, std::pair<int64_t, vk::Timer>> results;
 
+  ros::Time this_msg_time, last_msg_time;
+  bool finished = false;
   for(rosbag::View::iterator it = view.begin();it != view.end() && ros::ok();it++){
+    ros::spinOnce();
     if(it->getTopic() == imu_topic_name){
       sensor_msgs::Imu::ConstPtr imuMsg = it->instantiate<sensor_msgs::Imu>();
-      if (imuMsg != NULL) rovioNode.imuCallback(imuMsg);
+      this_msg_time = imuMsg->header.stamp;
+      if (imuMsg != NULL)
+        imu_pub.publish(imuMsg);
     }
     if(it->getTopic() == cam0_topic_name){
       sensor_msgs::ImageConstPtr imgMsg = it->instantiate<sensor_msgs::Image>();
+      this_msg_time = imgMsg->header.stamp;
       ++img_id;
       new_pose = true;
       if (imgMsg != NULL)
       {
         results.emplace(std::make_pair(imgMsg->header.stamp.toSec(), std::make_pair(img_id, vk::Timer())));
-        rovioNode.imgCallback0(imgMsg);
+        img_pub.publish(imgMsg);
       }
-
+      if(img_id > dataset_last_frame)
+        finished = true;
     }
-    ros::spinOnce();
+    if(last_msg_time.toSec() > 0)
+      ros::Duration(this_msg_time-last_msg_time).sleep();
+    if(!this_msg_time.is_zero())
+      last_msg_time = this_msg_time;
 
-    if(rovioNode.gotFirstMessages_){
-      static double lastSafeTime = rovioNode.mpFilter_->safe_.t_;
-      if(rovioNode.mpFilter_->safe_.t_ > lastSafeTime){
-        lastSafeTime = rovioNode.mpFilter_->safe_.t_;
+    if(rovio_node.gotFirstMessages_){
+      static double lastSafeTime = rovio_node.mpFilter_->safe_.t_;
+      if(rovio_node.mpFilter_->safe_.t_ > lastSafeTime){
+        lastSafeTime = rovio_node.mpFilter_->safe_.t_;
 
         if(new_pose)
         {
           auto result = results.find(lastSafeTime);
           if(result != results.end())
           {
-            tracePose(trace_est_pose, rovioNode.imuOutput_.WrWB(), rovioNode.imuOutput_.qBW().vector(), result->second.first);
+            tracePose(trace_est_pose, rovio_node.imuOutput_.WrWB(), rovio_node.imuOutput_.qBW().vector(), result->second.first);
             new_pose = false;
             traceTiming(trace_timing, lastSafeTime, result->second.second.stop());
             results.erase(lastSafeTime);
@@ -184,18 +200,21 @@ int main(int argc, char** argv){
         isTriggerInitialized = true;
       }
       if(resetTrigger>0.0 && lastSafeTime - lastTriggerTime > resetTrigger){
-        rovioNode.requestReset();
-        rovioNode.mpFilter_->init_.state_.WrWM() = rovioNode.mpFilter_->safe_.state_.WrWM();
-        rovioNode.mpFilter_->init_.state_.qWM() = rovioNode.mpFilter_->safe_.state_.qWM();
+        rovio_node.requestReset();
+        rovio_node.mpFilter_->init_.state_.WrWM() = rovio_node.mpFilter_->safe_.state_.WrWM();
+        rovio_node.mpFilter_->init_.state_.qWM() = rovio_node.mpFilter_->safe_.state_.qWM();
         lastTriggerTime = lastSafeTime;
       }
     }
+    if(finished)
+      break;
   }
+
+  //rovio_node.reset();
 
   bagIn.close();
   trace_est_pose.close();
   trace_timing.close();
-
 
   return 0;
 }
