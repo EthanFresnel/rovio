@@ -32,6 +32,9 @@
 #include <memory>
 #include <mutex>
 #include <queue>
+#include <unordered_map>
+
+#include <vikit/timer.h>
 
 #include <cv_bridge/cv_bridge.h>
 #include <geometry_msgs/Pose.h>
@@ -182,6 +185,13 @@ class RovioNode{
   std::string world_frame_;
   std::string camera_frame_;
   std::string imu_frame_;
+
+  std::shared_ptr<std::ofstream> trace_est_pose_;
+  std::shared_ptr<std::ofstream> trace_;
+  typedef std::unordered_map<uint64_t, std::pair<int64_t, vk::Timer>> resultsMap;
+  std::shared_ptr<resultsMap> results_;
+  uint64_t lastInputImageTime_;
+
 
   /** \brief Constructor
    */
@@ -508,6 +518,7 @@ class RovioNode{
     cv_ptr->image.copyTo(cv_img);
     if(init_state_.isInitialized() && !cv_img.empty()){
       double msgTime = img->header.stamp.toSec();
+      lastInputImageTime_ = img->header.stamp.toNSec();
       if(msgTime != imgUpdateMeas_.template get<mtImgMeas::_aux>().imgTime_){
         for(int i=0;i<mtState::nCam_;i++){
           if(imgUpdateMeas_.template get<mtImgMeas::_aux>().isValidPyr_[i]){
@@ -523,6 +534,8 @@ class RovioNode{
         mpFilter_->template addUpdateMeas<0>(imgUpdateMeas_,msgTime);
         imgUpdateMeas_.template get<mtImgMeas::_aux>().reset(msgTime);
         updateAndPublish();
+        tracePose(lastInputImageTime_);
+        traceTiming(lastInputImageTime_);
       }
     }
   }
@@ -628,6 +641,57 @@ class RovioNode{
     init_state_.state_ = FilterInitializationState::State::WaitForInitExternalPose;
   }
 
+  void setTraceFiles(std::shared_ptr<std::ofstream> est_pose,
+                     std::shared_ptr<std::ofstream> trace)
+  {
+    trace_est_pose_ = est_pose;
+    trace_ = trace;
+  }
+
+  void tracePose(const uint64_t timestamp)
+  {
+    Eigen::Vector3d t = imuOutput_.WrWB();
+    Eigen::Vector4d q = imuOutput_.qBW().vector();
+    int64_t id;
+
+    auto result = results_->find(timestamp);
+    if(result != results_->end())
+    {
+      id = result->second.first;
+      trace_est_pose_->precision(8);
+      *trace_est_pose_ << id << " ";
+      *trace_est_pose_ << t(0) << " " << t(1) << " " << t(2) << " "
+                       << q(1) << " " << q(2) << " " << q(3) << " "
+                       << -q(0) << " " << std::endl;
+    }
+    else
+    {
+      ROS_WARN_STREAM("Could not find result from time " << std::fixed << std::setw(16) << timestamp << " in results.");
+    }
+  }
+
+  void traceTiming(const uint64_t timestamp)
+  {
+    double t_frame;
+    auto result = results_->find(timestamp);
+    if(result != results_->end())
+    {
+      t_frame = result->second.second.stop();
+      //results_->erase(timestamp);
+      trace_->precision(16);
+      *trace_ << static_cast<double>(timestamp)/1e9 << ", " << t_frame << std::endl;
+    }
+    else
+    {
+      ROS_WARN_STREAM("Could not find result from time " << std::fixed << std::setw(16) << timestamp << " in results.");
+    }
+  }
+
+  void setResultsMap(std::shared_ptr<resultsMap> results)
+  {
+    results_ = results;
+  }
+
   /** \brief Executes the update step of the filter and publishes the updated data.
    */
   void updateAndPublish(){
@@ -664,7 +728,7 @@ class RovioNode{
 
         // Obtain the save filter state.
         mtFilterState& filterState = mpFilter_->safe_;
-	mtState& state = mpFilter_->safe_.state_;
+      	mtState& state = mpFilter_->safe_.state_;
         state.updateMultiCameraExtrinsics(&mpFilter_->multiCamera_);
         MXD& cov = mpFilter_->safe_.cov_;
         imuOutputCT_.transformState(state,imuOutput_);

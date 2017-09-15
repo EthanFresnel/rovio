@@ -29,4 +29,5 @@
   <depend>rosbag</depend>
   <depend>yaml_cpp_catkin</depend>
   <depend>vikit_common</depend>
+  <depend>rpg_common</depend>
 </package>

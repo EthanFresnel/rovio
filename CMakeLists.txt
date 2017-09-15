@@ -68,6 +68,7 @@ find_package(catkin REQUIRED COMPONENTS
 	tf
 	rosbag
 	vikit_common
+	rpg_common
 )
 
 add_service_files(
@@ -98,6 +99,7 @@ catkin_package(
 	rosbag
   yaml_cpp_catkin
 	vikit_common
+	rpg_common
 )
 
 include_directories(include ${catkin_INCLUDE_DIRS} ${YamlCpp_INCLUDE_DIRS})
